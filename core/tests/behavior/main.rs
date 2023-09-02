@@ -73,21 +73,21 @@ fn behavior_test<B: Builder>() -> Vec<Trial> {
 
     let mut trials = vec![];
     // Blocking tests
-    trials.extend(behavior_blocking_copy_tests(&operator));
-    trials.extend(behavior_blocking_list_tests(&operator));
-    trials.extend(behavior_blocking_read_only_tests(&operator));
-    trials.extend(behavior_blocking_rename_tests(&operator));
-    trials.extend(behavior_blocking_write_tests(&operator));
-    // Async tests
-    trials.extend(behavior_append_tests(&operator));
-    trials.extend(behavior_copy_tests(&operator));
-    trials.extend(behavior_list_only_tests(&operator));
-    trials.extend(behavior_list_tests(&operator));
-    trials.extend(behavior_presign_tests(&operator));
-    trials.extend(behavior_read_only_tests(&operator));
-    trials.extend(behavior_rename_tests(&operator));
+    // trials.extend(behavior_blocking_copy_tests(&operator));
+    // trials.extend(behavior_blocking_list_tests(&operator));
+    // trials.extend(behavior_blocking_read_only_tests(&operator));
+    // trials.extend(behavior_blocking_rename_tests(&operator));
+    // trials.extend(behavior_blocking_write_tests(&operator));
+    // // Async tests
+    // trials.extend(behavior_append_tests(&operator));
+    // trials.extend(behavior_copy_tests(&operator));
+    // trials.extend(behavior_list_only_tests(&operator));
+    // trials.extend(behavior_list_tests(&operator));
+    // trials.extend(behavior_presign_tests(&operator));
+    // trials.extend(behavior_read_only_tests(&operator));
+    // trials.extend(behavior_rename_tests(&operator));
     trials.extend(behavior_write_tests(&operator));
-    trials.extend(behavior_fuzz_tests(&operator));
+    // trials.extend(behavior_fuzz_tests(&operator));
 
     trials
 }

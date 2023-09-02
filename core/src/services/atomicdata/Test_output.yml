@@ -1,0 +1,60 @@
+test services_atomicdata::test_write_with_dir_path                    ... ok
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: Error("missing field `https://atomicdata.dev/properties/endpoint/results`", line: 7, column: 1)', core/src/services/atomicdata/backend.rs:431:77
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test services_atomicdata::test_write_with_special_chars               ... FAILED
+test services_atomicdata::test_write_with_cache_control               ... ok
+test services_atomicdata::test_write_with_content_type                ... ok
+test services_atomicdata::test_write_with_content_disposition         ... ok
+test services_atomicdata::test_create_dir                             ... ok
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_stat_file                              ... FAILED
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_write_only                             ... FAILED
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: Error("missing field `https://atomicdata.dev/properties/endpoint/results`", line: 7, column: 1)', core/src/services/atomicdata/backend.rs:431:77
+test services_atomicdata::test_stat_with_special_chars                ... FAILED
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_stat_not_exist                         ... FAILED
+test services_atomicdata::test_stat_with_if_match                     ... ok
+test services_atomicdata::test_stat_with_if_none_match                ... ok
+test services_atomicdata::test_stat_root                              ... ok
+test services_atomicdata::test_stat_dir                               ... ok
+test services_atomicdata::test_create_dir_existing                    ... ok
+test services_atomicdata::test_stat_not_cleaned_path                  ... ok
+test services_atomicdata::test_read_full                              ... ok
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_read_range                             ... FAILED
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_read_large_range                       ... FAILED
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_read_not_exist                         ... FAILED
+test services_atomicdata::test_read_with_if_match                     ... ok
+test services_atomicdata::test_read_with_if_none_match                ... ok
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_reader_range                           ... FAILED
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_reader_from                            ... FAILED
+test services_atomicdata::test_reader_tail                            ... ok
+test services_atomicdata::test_fuzz_part_reader                       ... ok
+test services_atomicdata::test_fuzz_range_reader                      ... ok
+test services_atomicdata::test_read_with_override_cache_control       ... ok
+test services_atomicdata::test_read_with_override_content_disposition ... ok
+test services_atomicdata::test_read_with_override_content_type        ... ok
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: Error("missing field `https://atomicdata.dev/properties/endpoint/results`", line: 7, column: 1)', core/src/services/atomicdata/backend.rs:431:77
+test services_atomicdata::test_read_with_special_chars                ... FAILED
+test services_atomicdata::test_fuzz_offset_reader                     ... ok
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: Error("missing field `https://atomicdata.dev/properties/endpoint/results`", line: 7, column: 1)', core/src/services/atomicdata/backend.rs:431:77
+test services_atomicdata::test_delete_with_special_chars              ... FAILED
+test services_atomicdata::test_delete_not_existing                    ... ok
+test services_atomicdata::test_read_with_dir_path                     ... ok
+test services_atomicdata::test_delete_empty_dir                       ... ok
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_delete_file                            ... FAILED
+test services_atomicdata::test_writer_sink                            ... ok
+test services_atomicdata::test_writer_copy                            ... ok
+test services_atomicdata::test_writer_abort                           ... ok
+test services_atomicdata::test_writer_write                           ... ok
+test services_atomicdata::test_fuzz_unsized_writer                    ... ok
+test services_atomicdata::test_writer_futures_copy                    ... ok
+thread '<unnamed>' panicked at 'index out of bounds: the len is 0 but the index is 0', core/src/services/atomicdata/backend.rs:402:33
+test services_atomicdata::test_remove_one_file                        ... FAILED
+test services_atomicdata::test_invalid_reader_seek                    ... ok

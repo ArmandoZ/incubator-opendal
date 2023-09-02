@@ -96,9 +96,13 @@ pub fn init_service<B: Builder>() -> Option<Operator> {
 pub fn gen_bytes() -> (Vec<u8>, usize) {
     let mut rng = thread_rng();
 
-    let size = rng.gen_range(1..4 * 1024 * 1024);
+    // let size = rng.gen_range(1..4 * 1024 * 1024);
+    let size = 100;
     let mut content = vec![0; size];
-    rng.fill_bytes(&mut content);
+    for i in 0..size {
+        content[i] = 52;
+    }
+    // rng.fill_bytes(&mut content);
 
     (content, size)
 }

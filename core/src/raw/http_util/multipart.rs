@@ -188,6 +188,22 @@ impl FormDataPart {
         }
     }
 
+    pub fn new_2(name: &str, filename: &str) -> Self {
+        // Insert content disposition header for part.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_DISPOSITION,
+            format!("form-data; name=\"{}\"; filename=\"{}\"", name, filename)
+                .parse()
+                .unwrap(),
+        );
+
+        Self {
+            headers,
+            content: Bytes::new(),
+        }
+    }
+
     /// Insert a header into part.
     pub fn header(mut self, key: HeaderName, value: HeaderValue) -> Self {
         self.headers.insert(key, value);
