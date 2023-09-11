@@ -93,9 +93,9 @@ impl Builder for AtomicdataBuilder {
 
         // TODO maybe pass in agent data
         let agent = Agent {
-            private_key: Some("kQOCcfyg52quo5GQAn+idnM+PczMMQLLdG62Cmen/z4=".to_string()),
-            public_key: "yqIhHBkNwpKp3aR1IMevWrEL/VjI8xOX0nCefUdLBOc=".to_string(),
-            subject: "http://localhost:9883/agents/yqIhHBkNwpKp3aR1IMevWrEL/VjI8xOX0nCefUdLBOc="
+            private_key: Some("lOelLXLICZ7FgAXE/GATo0XyIeEPObfrjjmLLhEH270=".to_string()),
+            public_key: "D/sDuB66hfLu/d57Xgafp8g9tmuGT5nZhYyu+sD69pY=".to_string(),
+            subject: "http://localhost:9883/agents/D/sDuB66hfLu/d57Xgafp8g9tmuGT5nZhYyu+sD69pY="
                 .to_string(),
             created_at: 1,
             name: Some("agent".to_string()),
@@ -114,6 +114,8 @@ impl Builder for AtomicdataBuilder {
 pub type AtomicdataBackend = kv::Backend<Adapter>;
 
 const FILENAME_PROPERTY: &str = "https://atomicdata.dev/properties/filename";
+
+const DO_DEBUG: bool = false;
 
 // TODO: Maybe rename in batch? camel_case
 #[derive(Debug, Serialize)]
@@ -160,8 +162,15 @@ struct FileStruct {
 struct QueryResultStruct {
     // #[serde(rename = "@id")]
     // id: String,
-    #[serde(rename = "https://atomicdata.dev/properties/endpoint/results")]
+    #[serde(
+        rename = "https://atomicdata.dev/properties/endpoint/results",
+        default = "empty_vec"
+    )]
     results: Vec<FileStruct>,
+}
+
+fn empty_vec() -> Vec<FileStruct> {
+    Vec::new()
 }
 
 #[derive(Clone)]
@@ -183,7 +192,10 @@ impl Adapter {
         let auth_headers = get_authentication_headers(url, &self.agent).unwrap();
 
         for (k, v) in &auth_headers {
-            println!("Key: {}, Value: {}", k, v);
+            // [TODO REMOVE DEBUG]
+            if DO_DEBUG {
+                println!("Key: {}, Value: {}", k, v);
+            }
             req = req.header(k, v);
         }
 
@@ -219,7 +231,9 @@ impl Adapter {
         );
 
         // [TODO REMOVE DEBUG]
-        println!("Get Url: {}", url);
+        if DO_DEBUG {
+            println!("Get Url: {}", url);
+        }
 
         let mut req = Request::get(&url);
         req = self.sign(&url, req);
@@ -228,9 +242,11 @@ impl Adapter {
         let req = req.body(AsyncBody::Empty).unwrap();
 
         // [TODO REMOVE DEBUG]
-        println!("Headers");
-        for (k, v) in req.headers() {
-            println!("{}: {}", k, v.to_str().unwrap());
+        if DO_DEBUG {
+            println!("Headers");
+            for (k, v) in req.headers() {
+                println!("{}: {}", k, v.to_str().unwrap());
+            }
         }
 
         Ok(req)
@@ -322,7 +338,9 @@ impl Adapter {
 
         let commit_sign_string = serde_json::to_string(&commit_sign).unwrap();
         // [TODO REMOVE DEBUG]
-        println!("body {}", commit_sign_string);
+        if DO_DEBUG {
+            println!("body {}", commit_sign_string);
+        }
 
         let signature = sign_message(
             &commit_sign_string,
@@ -344,7 +362,9 @@ impl Adapter {
 
         let body_string = serde_json::to_string(&commit).unwrap();
         // [TODO REMOVE DEBUG]
-        println!("body {}", body_string);
+        if DO_DEBUG {
+            println!("body {}", body_string);
+        }
 
         let body_bytes = body_string.as_bytes().to_owned();
 
@@ -388,20 +408,26 @@ impl kv::Adapter for Adapter {
             serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
 
         // [TODO REMOVE DEBUG]
-        println!(
-            "Response {:?}",
-            String::from_utf8(bytes.to_vec())
-                .unwrap()
-                .replace("\r\n", "\n")
-        );
-        println!(
-            "Response {} {}",
-            query_result.results.len(),
-            query_result.results[0].download_url
-        );
+        if DO_DEBUG {
+            println!(
+                "Response {:?}",
+                String::from_utf8(bytes.to_vec())
+                    .unwrap()
+                    .replace("\r\n", "\n")
+            );
+        }
 
         if query_result.results.is_empty() {
             return Err(Error::new(ErrorKind::NotFound, "atomicdata: key not found"));
+        }
+
+        // [TODO REMOVE DEBUG]
+        if DO_DEBUG {
+            println!(
+                "Response {} {}",
+                query_result.results.len(),
+                query_result.results[0].download_url
+            );
         }
 
         // Download
@@ -410,10 +436,12 @@ impl kv::Adapter for Adapter {
             .await?;
 
         // [TODO REMOVE DEBUG]
-        println!(
-            "bytes_file {:?}",
-            String::from_utf8(bytes_file.to_vec()).unwrap()
-        );
+        if DO_DEBUG {
+            println!(
+                "bytes_file {:?}",
+                String::from_utf8(bytes_file.to_vec()).unwrap()
+            );
+        }
 
         Ok(Some(bytes_file.to_vec()))
     }
@@ -434,11 +462,13 @@ impl kv::Adapter for Adapter {
             let bytes = res.into_body().bytes().await?;
 
             // [TODO REMOVE DEBUG]
-            println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
+            if DO_DEBUG {
+                println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
+            }
         }
 
         // TODO Either add notes or make this code clean
-        for _i in 0..100 {
+        for _i in 0..1500 {
             let req = self.atomic_get_object_request(path).unwrap();
             let resp = self.client.send(req).await?;
             let bytes = resp.into_body().bytes().await?;
@@ -459,7 +489,7 @@ impl kv::Adapter for Adapter {
         let path = path.as_str();
 
         // TODO check this
-        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fs87gcyjnnks";
+        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fvmohmke3kla";
 
         // Build Url
         let url = format!(
@@ -471,14 +501,18 @@ impl kv::Adapter for Adapter {
 
         let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
         // [TODO REMOVE DEBUG]
-        println!("set Url: {}", url);
+        if DO_DEBUG {
+            println!("set Url: {}", url);
+        }
 
         // Get/Set authentication headers
         let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
 
         for (k, v) in &auth_headers {
             // [TODO REMOVE DEBUG]
-            println!("Key: {}, Value: {}", k, v);
+            if DO_DEBUG {
+                println!("Key: {}, Value: {}", k, v);
+            }
             req = req.header(k, v);
         }
         req = req.header(
@@ -499,22 +533,26 @@ impl kv::Adapter for Adapter {
 
         let body_await = body.collect().await.unwrap();
         // [TODO REMOVE DEBUG]
-        println!(
-            "Body\n\n{}",
-            String::from_utf8(body_await.to_vec())
-                .unwrap()
-                .replace("\r\n", "\n")
-        );
+        if DO_DEBUG {
+            println!(
+                "Body\n\n{}",
+                String::from_utf8(body_await.to_vec())
+                    .unwrap()
+                    .replace("\r\n", "\n")
+            );
+        }
 
         // Post
         let req = req.body(AsyncBody::Bytes(body_await)).unwrap();
 
         // [TODO REMOVE DEBUG]
-        println!("Headers");
-        for (k, v) in req.headers() {
-            println!("{}: {}", k, v.to_str().unwrap());
+        if DO_DEBUG {
+            println!("Headers");
+            for (k, v) in req.headers() {
+                println!("{}: {}", k, v.to_str().unwrap());
+            }
         }
-        //
+
         // end::atomic_post_object_request
         // let req = self.atomic_post_object_request(&path, value).await.unwrap();
 
@@ -522,12 +560,14 @@ impl kv::Adapter for Adapter {
         let bytes = res.into_body().bytes().await?;
 
         // [TODO REMOVE DEBUG]
-        println!("Response {:?}", std::str::from_utf8(&bytes));
+        if DO_DEBUG {
+            println!("Response {:?}", std::str::from_utf8(&bytes));
+        }
 
         // Maybe a known issue with commits
         // TODO: Maybe change this to retry
         // TODO Either add notes or make this code clean
-        for _i in 0..100 {
+        for _i in 0..1500 {
             let req = self.atomic_get_object_request(path).unwrap();
             let resp = self.client.send(req).await?;
             let bytes = resp.into_body().bytes().await?;
@@ -552,19 +592,21 @@ impl kv::Adapter for Adapter {
             serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
 
         // [TODO REMOVE DEBUG]
-        println!(
-            "Response {:?}",
-            String::from_utf8(bytes.to_vec())
-                .unwrap()
-                .replace("\r\n", "\n")
-        );
+        if DO_DEBUG {
+            println!(
+                "Response {:?}",
+                String::from_utf8(bytes.to_vec())
+                    .unwrap()
+                    .replace("\r\n", "\n")
+            );
 
-        // [TODO REMOVE DEBUG]
-        println!(
-            "Response {} {}",
-            query_result.results.len(),
-            query_result.results[0].download_url
-        );
+            // [TODO REMOVE DEBUG]
+            println!(
+                "Response {} {}",
+                query_result.results.len(),
+                query_result.results[0].download_url
+            );
+        }
 
         // Download
         for result in query_result.results {
@@ -574,13 +616,15 @@ impl kv::Adapter for Adapter {
             let bytes = res.into_body().bytes().await?;
 
             // [TODO REMOVE DEBUG]
-            println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
+            if DO_DEBUG {
+                println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
+            }
         }
 
         // Maybe a known issue with commits
         // TODO: Maybe change this to retry
         // TODO Either add notes or make this code clean
-        for _i in 0..100 {
+        for _i in 0..1500 {
             let req = self.atomic_get_object_request(path).unwrap();
             let resp = self.client.send(req).await?;
             let bytes = resp.into_body().bytes().await?;
