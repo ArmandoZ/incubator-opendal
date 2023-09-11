@@ -18,20 +18,30 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::sync::Arc;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use bytes::Bytes;
 
+use serde::Deserialize;
+use serde::Serialize;
+
+use http::header::CONTENT_TYPE;
+use http::Request;
+
+use atomic_lib::agents::Agent;
+use atomic_lib::client::get_authentication_headers;
+use atomic_lib::commit::sign_message;
 use atomic_lib::errors::AtomicError;
-use atomic_lib::storelike::Query;
-use atomic_lib::Store;
-use atomic_lib::Storelike;
 
 use async_trait::async_trait;
 
 use crate::raw::adapters::kv;
 use crate::raw::normalize_root;
+use crate::raw::oio::StreamExt;
+use crate::raw::percent_encode_path;
+use crate::raw::AsyncBody;
+use crate::raw::FormDataPart;
+use crate::raw::HttpClient;
+use crate::raw::Multipart;
 use crate::Builder;
 use crate::Scheme;
 use crate::*;
@@ -72,13 +82,6 @@ impl Builder for AtomicdataBuilder {
     }
 
     fn build(&mut self) -> Result<Self::Accessor> {
-        let store = atomic_lib::Store::init().unwrap();
-
-        let agent = store.create_agent(Some("local_agent")).unwrap();
-        store.set_default_agent(agent);
-
-        let store = Arc::new(store);
-
         let root = normalize_root(
             self.root
                 .clone()
@@ -88,27 +91,275 @@ impl Builder for AtomicdataBuilder {
 
         let endpoint = self.endpoint.clone().unwrap();
 
-        Ok(AtomicdataBackend::new(Adapter { store, endpoint }).with_root(&root))
+        // TODO maybe pass in agent data
+        let agent = Agent {
+            private_key: Some("kQOCcfyg52quo5GQAn+idnM+PczMMQLLdG62Cmen/z4=".to_string()),
+            public_key: "yqIhHBkNwpKp3aR1IMevWrEL/VjI8xOX0nCefUdLBOc=".to_string(),
+            subject: "http://localhost:9883/agents/yqIhHBkNwpKp3aR1IMevWrEL/VjI8xOX0nCefUdLBOc="
+                .to_string(),
+            created_at: 1,
+            name: Some("agent".to_string()),
+        };
+
+        Ok(AtomicdataBackend::new(Adapter {
+            endpoint,
+            agent,
+            client: HttpClient::new().unwrap(),
+        })
+        .with_root(&root))
     }
 }
 
 /// Backend for Atomicdata services.
 pub type AtomicdataBackend = kv::Backend<Adapter>;
 
-const DOCUMENT_CLASS: &str = "classes/Document";
-const KEY_PROPERTY: &str = "properties/name";
-const VALUE_PROPERTY: &str = "properties/atom/value";
+const FILENAME_PROPERTY: &str = "https://atomicdata.dev/properties/filename";
+
+// TODO: Maybe rename in batch? camel_case
+#[derive(Debug, Serialize)]
+struct CommitStructSign {
+    #[serde(rename = "https://atomicdata.dev/properties/createdAt")]
+    created_at: i64,
+    #[serde(rename = "https://atomicdata.dev/properties/destroy")]
+    destroy: bool,
+    #[serde(rename = "https://atomicdata.dev/properties/isA")]
+    is_a: Vec<String>,
+    #[serde(rename = "https://atomicdata.dev/properties/signer")]
+    signer: String,
+    #[serde(rename = "https://atomicdata.dev/properties/subject")]
+    subject: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CommitStruct {
+    #[serde(rename = "https://atomicdata.dev/properties/createdAt")]
+    created_at: i64,
+    #[serde(rename = "https://atomicdata.dev/properties/destroy")]
+    destroy: bool,
+    #[serde(rename = "https://atomicdata.dev/properties/isA")]
+    is_a: Vec<String>,
+    #[serde(rename = "https://atomicdata.dev/properties/signature")]
+    signature: String,
+    #[serde(rename = "https://atomicdata.dev/properties/signer")]
+    signer: String,
+    #[serde(rename = "https://atomicdata.dev/properties/subject")]
+    subject: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileStruct {
+    #[serde(rename = "@id")]
+    id: String,
+    #[serde(rename = "https://atomicdata.dev/properties/downloadURL")]
+    download_url: String,
+    // #[serde(rename = "https://atomicdata.dev/properties/filename")]
+    // filename: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueryResultStruct {
+    // #[serde(rename = "@id")]
+    // id: String,
+    #[serde(rename = "https://atomicdata.dev/properties/endpoint/results")]
+    results: Vec<FileStruct>,
+}
 
 #[derive(Clone)]
 pub struct Adapter {
-    store: Arc<Store>,
     endpoint: String,
+    agent: Agent,
+    client: HttpClient,
 }
 
 impl Debug for Adapter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut ds = f.debug_struct("Adapter");
         ds.finish()
+    }
+}
+
+impl Adapter {
+    fn sign(&self, url: &str, mut req: http::request::Builder) -> http::request::Builder {
+        let auth_headers = get_authentication_headers(url, &self.agent).unwrap();
+
+        for (k, v) in &auth_headers {
+            println!("Key: {}, Value: {}", k, v);
+            req = req.header(k, v);
+        }
+
+        req
+    }
+
+    fn sanitize_path(&self, path: &str) -> String {
+        // Sanitize the same way as
+        // https://github.com/atomicdata-dev/atomic-server/blob/49d65da6b80323117fb488106a325fca95ca48b3/server/src/handlers/upload.rs#L56C13-L56C50
+        // TODO: Maybe change with a proper file directory
+        let binding = sanitize_filename::sanitize(path);
+
+        // [TODO REMOVE DEBUG]
+        // let path = binding.replace(' ', "-");
+        // path[..7].to_string()
+
+        binding.replace(' ', "-")
+    }
+}
+
+impl Adapter {
+    pub fn atomic_get_object_request(&self, path: &str) -> Result<Request<AsyncBody>> {
+        // TODO error handling
+        let path = self.sanitize_path(path).to_owned();
+        let path = path.as_str();
+
+        let filename_property_escaped = FILENAME_PROPERTY.replace(':', "\\:").replace('.', "\\.");
+        let url = format!(
+            "{}/search?filters={}:%22{}%22",
+            self.endpoint,
+            percent_encode_path(&filename_property_escaped),
+            percent_encode_path(path)
+        );
+
+        // [TODO REMOVE DEBUG]
+        println!("Get Url: {}", url);
+
+        let mut req = Request::get(&url);
+        req = self.sign(&url, req);
+        req = req.header(http::header::ACCEPT, "application/ad+json");
+
+        let req = req.body(AsyncBody::Empty).unwrap();
+
+        // [TODO REMOVE DEBUG]
+        println!("Headers");
+        for (k, v) in req.headers() {
+            println!("{}: {}", k, v.to_str().unwrap());
+        }
+
+        Ok(req)
+    }
+
+    // pub fn atomic_post_object_request(
+    //     &self,
+    //     path: &str,
+    //     value: &[u8],
+    // ) -> Result<Request<AsyncBody>> {
+    //     // TODO error handling
+    //     let path = self.sanitize_path(path).to_owned();
+    //     let path = path.as_str();
+
+    //     // TODO check this
+    //     let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fs87gcyjnnks";
+
+    //     // Build Url
+    //     let url = format!(
+    //         "{}/upload?parent={}",
+    //         self.endpoint,
+    //         parent_resource_url // percent_encode_path(&parent_resource_url)
+    //     );
+    //     let mut req = Request::post(&url);
+
+    //     let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
+    //     println!("set Url: {}", url);
+
+    //     // Get/Set authentication headers
+    //     let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
+
+    //     for (k, v) in &auth_headers {
+    //         println!("Key: {}, Value: {}", k, v);
+    //         req = req.header(k, v);
+    //     }
+    //     req = req.header(
+    //         CONTENT_TYPE,
+    //         format!("multipart/form-data; boundary={}", boundary),
+    //     );
+
+    //     let owned_value = value.to_vec();
+
+    //     let datapart = FormDataPart::new_2("assets", &path)
+    //         .header(CONTENT_TYPE, "text/plain".parse().unwrap())
+    //         .content(owned_value);
+
+    //     // Build request body
+    //     let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
+
+    //     let (size, body) = multipart.build();
+
+    //     println!(
+    //         "Body\n\n{}",
+    //         String::from_utf8(body.collect().await.unwrap().to_vec())
+    //             .unwrap()
+    //             .replace("\r\n", "\n")
+    //     );
+
+    //     // Post
+    //     let req = req
+    //         .body(AsyncBody::Bytes(body.collect().await.unwrap()))
+    //         .unwrap();
+
+    //     println!("Headers");
+    //     for (k, v) in req.headers() {
+    //         println!("{}: {}", k, v.to_str().unwrap());
+    //     }
+
+    //     Ok(req)
+    // }
+
+    pub fn atomic_delete_object_request(&self, subject: &str) -> Result<Request<AsyncBody>> {
+        // TODO error handling
+        let url = format!("{}/commit", self.endpoint);
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("You're a time traveler")
+            .as_millis() as i64;
+
+        // TODO So many duplicates here
+        let commit_sign = CommitStructSign {
+            created_at: timestamp,
+            destroy: true,
+            is_a: ["https://atomicdata.dev/classes/Commit".to_string()].to_vec(),
+            signer: self.agent.subject.to_string(),
+            subject: subject.to_string().clone(),
+        };
+
+        let commit_sign_string = serde_json::to_string(&commit_sign).unwrap();
+        // [TODO REMOVE DEBUG]
+        println!("body {}", commit_sign_string);
+
+        let signature = sign_message(
+            &commit_sign_string,
+            self.agent.private_key.as_ref().unwrap(),
+            &self.agent.public_key,
+        )
+        .unwrap();
+
+        let commit = CommitStruct {
+            created_at: timestamp,
+            destroy: true,
+            is_a: ["https://atomicdata.dev/classes/Commit".to_string()].to_vec(),
+            signature,
+            signer: self.agent.subject.to_string(),
+            subject: subject.to_string().clone(),
+        };
+
+        let req = Request::post(&url);
+
+        let body_string = serde_json::to_string(&commit).unwrap();
+        // [TODO REMOVE DEBUG]
+        println!("body {}", body_string);
+
+        let body_bytes = body_string.as_bytes().to_owned();
+
+        let req = req.body(AsyncBody::Bytes(body_bytes.into())).unwrap();
+
+        Ok(req)
+    }
+
+    pub async fn download_from_url(&self, download_url: &String) -> Result<Bytes> {
+        let req = Request::get(download_url);
+        let req = req.body(AsyncBody::Empty).unwrap();
+        let resp = self.client.send(req).await?;
+        let bytes_file = resp.into_body().bytes().await?;
+
+        Ok(bytes_file)
     }
 }
 
@@ -129,72 +380,216 @@ impl kv::Adapter for Adapter {
     }
 
     async fn get(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        let query =
-            Query::new_prop_val(format!("{}/{}", self.endpoint, KEY_PROPERTY).as_str(), path);
-        let query_result = self.store.query(&query).map_err(format_atomic_error)?;
+        let req = self.atomic_get_object_request(path).unwrap();
+        let resp = self.client.send(req).await?;
+        let bytes = resp.into_body().bytes().await?;
 
-        if query_result.resources.is_empty() {
+        let query_result: QueryResultStruct =
+            serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+
+        // [TODO REMOVE DEBUG]
+        println!(
+            "Response {:?}",
+            String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .replace("\r\n", "\n")
+        );
+        println!(
+            "Response {} {}",
+            query_result.results.len(),
+            query_result.results[0].download_url
+        );
+
+        if query_result.results.is_empty() {
             return Err(Error::new(ErrorKind::NotFound, "atomicdata: key not found"));
         }
 
-        let result = query_result.resources[0]
-            .get(format!("{}/{}", self.endpoint, VALUE_PROPERTY).as_str())
-            .map_err(format_atomic_error)?;
+        // Download
+        let bytes_file = self
+            .download_from_url(&query_result.results[0].download_url)
+            .await?;
 
-        let data = BASE64_STANDARD.decode(result.to_string()).unwrap();
+        // [TODO REMOVE DEBUG]
+        println!(
+            "bytes_file {:?}",
+            String::from_utf8(bytes_file.to_vec()).unwrap()
+        );
 
-        Ok(Some(data))
+        Ok(Some(bytes_file.to_vec()))
     }
 
     async fn set(&self, path: &str, value: &[u8]) -> Result<()> {
-        let mut subject;
+        // TODO Handle overwrite - delete existing
+        let req = self.atomic_get_object_request(path).unwrap();
+        let res = self.client.send(req).await?;
+        let bytes = res.into_body().bytes().await?;
 
-        let query =
-            Query::new_prop_val(format!("{}/{}", self.endpoint, KEY_PROPERTY).as_str(), path);
-        let query_result = self.store.query(&query).map_err(format_atomic_error)?;
+        let query_result: QueryResultStruct =
+            serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
 
-        if !query_result.resources.is_empty() {
-            subject = query_result.resources[0].clone();
-        } else {
-            subject = atomic_lib::Resource::new_instance(
-                format!("{}/{}", self.endpoint, DOCUMENT_CLASS).as_str(),
-                &*self.store,
-            )
-            .map_err(format_atomic_error)?;
+        for result in query_result.results {
+            let req = self.atomic_delete_object_request(&result.id).unwrap();
+            let res = self.client.send(req).await?;
 
-            subject
-                .set_propval_string(
-                    format!("{}/{}", self.endpoint, KEY_PROPERTY).to_string(),
-                    path,
-                    &*self.store,
-                )
-                .map_err(format_atomic_error)?;
+            let bytes = res.into_body().bytes().await?;
+
+            // [TODO REMOVE DEBUG]
+            println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
         }
 
-        subject
-            .set_propval_string(
-                format!("{}/{}", self.endpoint, VALUE_PROPERTY).to_string(),
-                &BASE64_STANDARD.encode(value),
-                &*self.store,
-            )
-            .map_err(format_atomic_error)?;
+        // TODO Either add notes or make this code clean
+        for _i in 0..100 {
+            let req = self.atomic_get_object_request(path).unwrap();
+            let resp = self.client.send(req).await?;
+            let bytes = resp.into_body().bytes().await?;
+            let query_result: QueryResultStruct =
+                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            if query_result.results.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
 
-        subject
-            .save_locally(&*self.store)
-            .map_err(format_atomic_error)?;
+        // [TODO unwrap]
+        //
+        // start::atomic_post_object_request
+
+        // Real set
+        let path = self.sanitize_path(path).to_owned();
+        let path = path.as_str();
+
+        // TODO check this
+        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fs87gcyjnnks";
+
+        // Build Url
+        let url = format!(
+            "{}/upload?parent={}",
+            self.endpoint,
+            parent_resource_url // percent_encode_path(&parent_resource_url)
+        );
+        let mut req = Request::post(&url);
+
+        let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
+        // [TODO REMOVE DEBUG]
+        println!("set Url: {}", url);
+
+        // Get/Set authentication headers
+        let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
+
+        for (k, v) in &auth_headers {
+            // [TODO REMOVE DEBUG]
+            println!("Key: {}, Value: {}", k, v);
+            req = req.header(k, v);
+        }
+        req = req.header(
+            CONTENT_TYPE,
+            format!("multipart/form-data; boundary={}", boundary),
+        );
+
+        let owned_value = value.to_vec();
+
+        let datapart = FormDataPart::new_2("assets", path)
+            .header(CONTENT_TYPE, "text/plain".parse().unwrap())
+            .content(owned_value);
+
+        // Build request body
+        let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
+
+        let (_size, body) = multipart.build();
+
+        let body_await = body.collect().await.unwrap();
+        // [TODO REMOVE DEBUG]
+        println!(
+            "Body\n\n{}",
+            String::from_utf8(body_await.to_vec())
+                .unwrap()
+                .replace("\r\n", "\n")
+        );
+
+        // Post
+        let req = req.body(AsyncBody::Bytes(body_await)).unwrap();
+
+        // [TODO REMOVE DEBUG]
+        println!("Headers");
+        for (k, v) in req.headers() {
+            println!("{}: {}", k, v.to_str().unwrap());
+        }
+        //
+        // end::atomic_post_object_request
+        // let req = self.atomic_post_object_request(&path, value).await.unwrap();
+
+        let res = self.client.send(req).await?;
+        let bytes = res.into_body().bytes().await?;
+
+        // [TODO REMOVE DEBUG]
+        println!("Response {:?}", std::str::from_utf8(&bytes));
+
+        // Maybe a known issue with commits
+        // TODO: Maybe change this to retry
+        // TODO Either add notes or make this code clean
+        for _i in 0..100 {
+            let req = self.atomic_get_object_request(path).unwrap();
+            let resp = self.client.send(req).await?;
+            let bytes = resp.into_body().bytes().await?;
+            let query_result: QueryResultStruct =
+                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            if !query_result.results.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
 
         Ok(())
     }
 
     async fn delete(&self, path: &str) -> Result<()> {
-        let query =
-            Query::new_prop_val(format!("{}/{}", self.endpoint, KEY_PROPERTY).as_str(), path);
-        let query_result = self.store.query(&query).map_err(format_atomic_error)?;
+        // TODO should we refactor to core/backend - study them
+        let req = self.atomic_get_object_request(path).unwrap();
+        let res = self.client.send(req).await?;
+        let bytes = res.into_body().bytes().await?;
 
-        if !query_result.resources.is_empty() {
-            self.store
-                .remove_resource(query_result.resources[0].get_subject())
-                .map_err(format_atomic_error)?;
+        let query_result: QueryResultStruct =
+            serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+
+        // [TODO REMOVE DEBUG]
+        println!(
+            "Response {:?}",
+            String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .replace("\r\n", "\n")
+        );
+
+        // [TODO REMOVE DEBUG]
+        println!(
+            "Response {} {}",
+            query_result.results.len(),
+            query_result.results[0].download_url
+        );
+
+        // Download
+        for result in query_result.results {
+            let req = self.atomic_delete_object_request(&result.id).unwrap();
+            let res = self.client.send(req).await?;
+
+            let bytes = res.into_body().bytes().await?;
+
+            // [TODO REMOVE DEBUG]
+            println!("Delete Response {:?}", std::str::from_utf8(&bytes).unwrap());
+        }
+
+        // Maybe a known issue with commits
+        // TODO: Maybe change this to retry
+        // TODO Either add notes or make this code clean
+        for _i in 0..100 {
+            let req = self.atomic_get_object_request(path).unwrap();
+            let resp = self.client.send(req).await?;
+            let bytes = resp.into_body().bytes().await?;
+            let query_result: QueryResultStruct =
+                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            if query_result.results.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
 
         Ok(())

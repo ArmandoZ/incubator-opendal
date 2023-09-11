@@ -146,6 +146,7 @@ impl FromStr for Scheme {
         match s.as_str() {
             "azblob" => Ok(Scheme::Azblob),
             "azdfs" => Ok(Scheme::Azdfs),
+            "atomicdata" => Ok(Scheme::Atomicdata),
             "cacache" => Ok(Scheme::Cacache),
             "cos" => Ok(Scheme::Cos),
             "dashmap" => Ok(Scheme::Dashmap),

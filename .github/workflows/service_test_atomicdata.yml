@@ -51,4 +51,4 @@ jobs:
           RUST_BACKTRACE: full
           OPENDAL_ATOMICDATA_TEST: on
           OPENDAL_ATOMICDATA_ROOT: /tmp/opendal
-          OPENDAL_ATOMICDATA_ENDPOINT: https://atomicdata.dev
+          OPENDAL_ATOMICDATA_ENDPOINT: http://127.0.0.1:9883
