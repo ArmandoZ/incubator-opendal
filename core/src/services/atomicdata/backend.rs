@@ -252,71 +252,82 @@ impl Adapter {
         Ok(req)
     }
 
-    // pub fn atomic_post_object_request(
-    //     &self,
-    //     path: &str,
-    //     value: &[u8],
-    // ) -> Result<Request<AsyncBody>> {
-    //     // TODO error handling
-    //     let path = self.sanitize_path(path).to_owned();
-    //     let path = path.as_str();
+    async fn atomic_post_object_request(
+        &self,
+        path: &str,
+        value: &[u8],
+    ) -> Result<Request<AsyncBody>> {
+        // Real set
+        let path = self.sanitize_path(path).to_owned();
+        let path = path.as_str();
 
-    //     // TODO check this
-    //     let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fs87gcyjnnks";
+        // TODO check this
+        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fvmohmke3kla";
 
-    //     // Build Url
-    //     let url = format!(
-    //         "{}/upload?parent={}",
-    //         self.endpoint,
-    //         parent_resource_url // percent_encode_path(&parent_resource_url)
-    //     );
-    //     let mut req = Request::post(&url);
+        // Build Url
+        let url = format!(
+            "{}/upload?parent={}",
+            self.endpoint,
+            parent_resource_url // percent_encode_path(&parent_resource_url)
+        );
+        let mut req = Request::post(&url);
 
-    //     let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
-    //     println!("set Url: {}", url);
+        let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
+        // [TODO REMOVE DEBUG]
+        if DO_DEBUG {
+            println!("set Url: {}", url);
+        }
 
-    //     // Get/Set authentication headers
-    //     let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
+        // Get/Set authentication headers
+        let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
 
-    //     for (k, v) in &auth_headers {
-    //         println!("Key: {}, Value: {}", k, v);
-    //         req = req.header(k, v);
-    //     }
-    //     req = req.header(
-    //         CONTENT_TYPE,
-    //         format!("multipart/form-data; boundary={}", boundary),
-    //     );
+        for (k, v) in &auth_headers {
+            // [TODO REMOVE DEBUG]
+            if DO_DEBUG {
+                println!("Key: {}, Value: {}", k, v);
+            }
+            req = req.header(k, v);
+        }
+        req = req.header(
+            CONTENT_TYPE,
+            format!("multipart/form-data; boundary={}", boundary),
+        );
 
-    //     let owned_value = value.to_vec();
+        let owned_value = value.to_vec();
 
-    //     let datapart = FormDataPart::new_2("assets", &path)
-    //         .header(CONTENT_TYPE, "text/plain".parse().unwrap())
-    //         .content(owned_value);
+        let datapart = FormDataPart::new_2("assets", path)
+            .header(CONTENT_TYPE, "text/plain".parse().unwrap())
+            .content(owned_value);
 
-    //     // Build request body
-    //     let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
+        // Build request body
+        let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
 
-    //     let (size, body) = multipart.build();
+        let (_size, body) = multipart.build();
 
-    //     println!(
-    //         "Body\n\n{}",
-    //         String::from_utf8(body.collect().await.unwrap().to_vec())
-    //             .unwrap()
-    //             .replace("\r\n", "\n")
-    //     );
+        let body_await = body.collect().await.unwrap();
+        // [TODO REMOVE DEBUG]
+        if DO_DEBUG {
+            println!(
+                "Body\n\n{}",
+                String::from_utf8(body_await.to_vec())
+                    .unwrap()
+                    .replace("\r\n", "\n")
+            );
+        }
 
-    //     // Post
-    //     let req = req
-    //         .body(AsyncBody::Bytes(body.collect().await.unwrap()))
-    //         .unwrap();
+        // Post
+        let req = req.body(AsyncBody::Bytes(body_await)).unwrap();
 
-    //     println!("Headers");
-    //     for (k, v) in req.headers() {
-    //         println!("{}: {}", k, v.to_str().unwrap());
-    //     }
+        // [TODO REMOVE DEBUG]
+        if DO_DEBUG {
+            println!("Headers");
+            for (k, v) in req.headers() {
+                println!("{}: {}", k, v.to_str().unwrap());
+            }
+        }
 
-    //     Ok(req)
-    // }
+        Ok(req)
+    }
 
     pub fn atomic_delete_object_request(&self, subject: &str) -> Result<Request<AsyncBody>> {
         // TODO error handling
@@ -480,81 +491,7 @@ impl kv::Adapter for Adapter {
             std::thread::sleep(std::time::Duration::from_millis(30));
         }
 
-        // [TODO unwrap]
-        //
-        // start::atomic_post_object_request
-
-        // Real set
-        let path = self.sanitize_path(path).to_owned();
-        let path = path.as_str();
-
-        // TODO check this
-        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fvmohmke3kla";
-
-        // Build Url
-        let url = format!(
-            "{}/upload?parent={}",
-            self.endpoint,
-            parent_resource_url // percent_encode_path(&parent_resource_url)
-        );
-        let mut req = Request::post(&url);
-
-        let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
-        // [TODO REMOVE DEBUG]
-        if DO_DEBUG {
-            println!("set Url: {}", url);
-        }
-
-        // Get/Set authentication headers
-        let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
-
-        for (k, v) in &auth_headers {
-            // [TODO REMOVE DEBUG]
-            if DO_DEBUG {
-                println!("Key: {}, Value: {}", k, v);
-            }
-            req = req.header(k, v);
-        }
-        req = req.header(
-            CONTENT_TYPE,
-            format!("multipart/form-data; boundary={}", boundary),
-        );
-
-        let owned_value = value.to_vec();
-
-        let datapart = FormDataPart::new_2("assets", path)
-            .header(CONTENT_TYPE, "text/plain".parse().unwrap())
-            .content(owned_value);
-
-        // Build request body
-        let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
-
-        let (_size, body) = multipart.build();
-
-        let body_await = body.collect().await.unwrap();
-        // [TODO REMOVE DEBUG]
-        if DO_DEBUG {
-            println!(
-                "Body\n\n{}",
-                String::from_utf8(body_await.to_vec())
-                    .unwrap()
-                    .replace("\r\n", "\n")
-            );
-        }
-
-        // Post
-        let req = req.body(AsyncBody::Bytes(body_await)).unwrap();
-
-        // [TODO REMOVE DEBUG]
-        if DO_DEBUG {
-            println!("Headers");
-            for (k, v) in req.headers() {
-                println!("{}: {}", k, v.to_str().unwrap());
-            }
-        }
-
-        // end::atomic_post_object_request
-        // let req = self.atomic_post_object_request(&path, value).await.unwrap();
+        let req = self.atomic_post_object_request(&path, value).await.unwrap();
 
         let res = self.client.send(req).await?;
         let bytes = res.into_body().bytes().await?;
