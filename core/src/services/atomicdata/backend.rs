@@ -50,6 +50,9 @@ use crate::*;
 pub struct AtomicdataBuilder {
     root: Option<String>,
     endpoint: Option<String>,
+    private_key: Option<String>,
+    public_key: Option<String>,
+    parent_resource_id: Option<String>,
 }
 
 impl AtomicdataBuilder {
@@ -64,6 +67,24 @@ impl AtomicdataBuilder {
         self.endpoint = Some(endpoint.into());
         self
     }
+
+    /// Set the private key for agent used for Atomicdata.
+    pub fn private_key(&mut self, private_key: &str) -> &mut Self {
+        self.private_key = Some(private_key.into());
+        self
+    }
+
+    /// Set the public key for agent used for Atomicdata.
+    pub fn public_key(&mut self, public_key: &str) -> &mut Self {
+        self.public_key = Some(public_key.into());
+        self
+    }
+
+    /// Set the parent resource id (url) that Atomicdata uses to store resources under.
+    pub fn parent_resource_id(&mut self, parent_resource_id: &str) -> &mut Self {
+        self.parent_resource_id = Some(parent_resource_id.into());
+        self
+    }
 }
 
 impl Builder for AtomicdataBuilder {
@@ -75,6 +96,10 @@ impl Builder for AtomicdataBuilder {
 
         map.get("root").map(|v| builder.root(v));
         map.get("endpoint").map(|v| builder.endpoint(v));
+        map.get("private_key").map(|v| builder.private_key(v));
+        map.get("public_key").map(|v| builder.public_key(v));
+        map.get("parent_resource_id")
+            .map(|v| builder.parent_resource_id(v));
 
         builder
     }
@@ -88,18 +113,18 @@ impl Builder for AtomicdataBuilder {
         );
 
         let endpoint = self.endpoint.clone().unwrap();
+        let parent_resource_id = self.parent_resource_id.clone().unwrap();
 
-        // TODO maybe pass in agent data
         let agent = Agent {
-            private_key: Some("lOelLXLICZ7FgAXE/GATo0XyIeEPObfrjjmLLhEH270=".to_string()),
-            public_key: "D/sDuB66hfLu/d57Xgafp8g9tmuGT5nZhYyu+sD69pY=".to_string(),
-            subject: "http://localhost:9883/agents/D/sDuB66hfLu/d57Xgafp8g9tmuGT5nZhYyu+sD69pY="
-                .to_string(),
+            private_key: self.private_key.clone(),
+            public_key: self.public_key.clone().unwrap(),
+            subject: format!("{}/agents/{}", endpoint, self.public_key.clone().unwrap()),
             created_at: 1,
             name: Some("agent".to_string()),
         };
 
         Ok(AtomicdataBackend::new(Adapter {
+            parent_resource_id,
             endpoint,
             agent,
             client: HttpClient::new().unwrap(),
@@ -168,6 +193,7 @@ fn empty_vec() -> Vec<FileStruct> {
 
 #[derive(Clone)]
 pub struct Adapter {
+    parent_resource_id: String,
     endpoint: String,
     agent: Agent,
     client: HttpClient,
@@ -200,10 +226,6 @@ impl Adapter {
         // https://github.com/atomicdata-dev/atomic-server/blob/49d65da6b80323117fb488106a325fca95ca48b3/server/src/handlers/upload.rs#L56C13-L56C50
         // TODO: Maybe change with a proper file directory
         let binding = sanitize_filename::sanitize(path);
-
-        // [TODO REMOVE DEBUG]
-        // let path = binding.replace(' ', "-");
-        // path[..7].to_string()
 
         binding.replace(' ', "-")
     }
@@ -254,14 +276,11 @@ impl Adapter {
         let path = self.sanitize_path(path).to_owned();
         let path = path.as_str();
 
-        // TODO check this
-        let parent_resource_url = "http%3A%2F%2Flocalhost%3A9883%2Ffolder%2Fvmohmke3kla";
-
         // Build Url
         let url = format!(
             "{}/upload?parent={}",
             self.endpoint,
-            parent_resource_url // percent_encode_path(&parent_resource_url)
+            percent_encode_path(&self.parent_resource_id)
         );
         let mut req = Request::post(&url);
 
