@@ -21,6 +21,7 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 
 use async_trait::async_trait;
+use http::header::CONTENT_DISPOSITION;
 use http::header::CONTENT_TYPE;
 use http::Request;
 use serde::Deserialize;
@@ -287,7 +288,13 @@ impl Adapter {
 
         let owned_value = value.to_vec();
 
-        let datapart = FormDataPart::new_2("assets", path)
+        let datapart = FormDataPart::new("assets")
+            .header(
+                CONTENT_DISPOSITION,
+                format!("form-data; name=\"assets\"; filename=\"{}\"", path)
+                    .parse()
+                    .unwrap(),
+            )
             .header(CONTENT_TYPE, "text/plain".parse().unwrap())
             .content(owned_value);
 
