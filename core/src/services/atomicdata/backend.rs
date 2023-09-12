@@ -15,24 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
-use bytes::Bytes;
-
-use serde::Deserialize;
-use serde::Serialize;
-
+use async_trait::async_trait;
 use http::header::CONTENT_TYPE;
 use http::Request;
+use serde::Deserialize;
+use serde::Serialize;
 
 use atomic_lib::agents::Agent;
 use atomic_lib::client::get_authentication_headers;
 use atomic_lib::commit::sign_message;
 use atomic_lib::errors::AtomicError;
-
-use async_trait::async_trait;
 
 use crate::raw::adapters::kv;
 use crate::raw::normalize_root;
@@ -117,9 +114,8 @@ const FILENAME_PROPERTY: &str = "https://atomicdata.dev/properties/filename";
 
 const DO_DEBUG: bool = false;
 
-// TODO: Maybe rename in batch? camel_case
 #[derive(Debug, Serialize)]
-struct CommitStructSign {
+struct CommitStruct {
     #[serde(rename = "https://atomicdata.dev/properties/createdAt")]
     created_at: i64,
     #[serde(rename = "https://atomicdata.dev/properties/destroy")]
@@ -133,7 +129,7 @@ struct CommitStructSign {
 }
 
 #[derive(Debug, Serialize)]
-struct CommitStruct {
+struct CommitStructSigned {
     #[serde(rename = "https://atomicdata.dev/properties/createdAt")]
     created_at: i64,
     #[serde(rename = "https://atomicdata.dev/properties/destroy")]
@@ -154,14 +150,10 @@ struct FileStruct {
     id: String,
     #[serde(rename = "https://atomicdata.dev/properties/downloadURL")]
     download_url: String,
-    // #[serde(rename = "https://atomicdata.dev/properties/filename")]
-    // filename: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct QueryResultStruct {
-    // #[serde(rename = "@id")]
-    // id: String,
     #[serde(
         rename = "https://atomicdata.dev/properties/endpoint/results",
         default = "empty_vec"
@@ -301,22 +293,21 @@ impl Adapter {
 
         // Build request body
         let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
-
         let (_size, body) = multipart.build();
 
-        let body_await = body.collect().await.unwrap();
+        let body_bytes = body.collect().await.unwrap();
         // [TODO REMOVE DEBUG]
         if DO_DEBUG {
             println!(
                 "Body\n\n{}",
-                String::from_utf8(body_await.to_vec())
+                String::from_utf8(body_bytes.to_vec())
                     .unwrap()
                     .replace("\r\n", "\n")
             );
         }
 
         // Post
-        let req = req.body(AsyncBody::Bytes(body_await)).unwrap();
+        let req = req.body(AsyncBody::Bytes(body_bytes)).unwrap();
 
         // [TODO REMOVE DEBUG]
         if DO_DEBUG {
@@ -339,15 +330,14 @@ impl Adapter {
             .as_millis() as i64;
 
         // TODO So many duplicates here
-        let commit_sign = CommitStructSign {
+        let commit_to_sign = CommitStruct {
             created_at: timestamp,
             destroy: true,
             is_a: ["https://atomicdata.dev/classes/Commit".to_string()].to_vec(),
             signer: self.agent.subject.to_string(),
             subject: subject.to_string().clone(),
         };
-
-        let commit_sign_string = serde_json::to_string(&commit_sign).unwrap();
+        let commit_sign_string = serde_json::to_string(&commit_to_sign).unwrap();
         // [TODO REMOVE DEBUG]
         if DO_DEBUG {
             println!("body {}", commit_sign_string);
@@ -360,7 +350,7 @@ impl Adapter {
         )
         .unwrap();
 
-        let commit = CommitStruct {
+        let commit = CommitStructSigned {
             created_at: timestamp,
             destroy: true,
             is_a: ["https://atomicdata.dev/classes/Commit".to_string()].to_vec(),
@@ -370,7 +360,6 @@ impl Adapter {
         };
 
         let req = Request::post(&url);
-
         let body_string = serde_json::to_string(&commit).unwrap();
         // [TODO REMOVE DEBUG]
         if DO_DEBUG {
@@ -378,7 +367,6 @@ impl Adapter {
         }
 
         let body_bytes = body_string.as_bytes().to_owned();
-
         let req = req.body(AsyncBody::Bytes(body_bytes.into())).unwrap();
 
         Ok(req)
@@ -391,6 +379,28 @@ impl Adapter {
         let bytes_file = resp.into_body().bytes().await?;
 
         Ok(bytes_file)
+    }
+}
+
+impl Adapter {
+    async fn wait_for_resource(&self, path: &str, expect_exist: bool) -> Result<()> {
+        // TODO Either add notes or make this code clean
+        for _i in 0..1500 {
+            let req = self.atomic_get_object_request(path).unwrap();
+            let resp = self.client.send(req).await?;
+            let bytes = resp.into_body().bytes().await?;
+            let query_result: QueryResultStruct =
+                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            if !expect_exist && query_result.results.is_empty() {
+                break;
+            }
+            if expect_exist && !query_result.results.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+
+        Ok(())
     }
 }
 
@@ -478,21 +488,9 @@ impl kv::Adapter for Adapter {
             }
         }
 
-        // TODO Either add notes or make this code clean
-        for _i in 0..1500 {
-            let req = self.atomic_get_object_request(path).unwrap();
-            let resp = self.client.send(req).await?;
-            let bytes = resp.into_body().bytes().await?;
-            let query_result: QueryResultStruct =
-                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
-            if query_result.results.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
+        let _ = self.wait_for_resource(path, false).await;
 
         let req = self.atomic_post_object_request(&path, value).await.unwrap();
-
         let res = self.client.send(req).await?;
         let bytes = res.into_body().bytes().await?;
 
@@ -501,20 +499,7 @@ impl kv::Adapter for Adapter {
             println!("Response {:?}", std::str::from_utf8(&bytes));
         }
 
-        // Maybe a known issue with commits
-        // TODO: Maybe change this to retry
-        // TODO Either add notes or make this code clean
-        for _i in 0..1500 {
-            let req = self.atomic_get_object_request(path).unwrap();
-            let resp = self.client.send(req).await?;
-            let bytes = resp.into_body().bytes().await?;
-            let query_result: QueryResultStruct =
-                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
-            if !query_result.results.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
+        let _ = self.wait_for_resource(path, true).await;
 
         Ok(())
     }
@@ -545,7 +530,7 @@ impl kv::Adapter for Adapter {
             );
         }
 
-        // Download
+        // Delete
         for result in query_result.results {
             let req = self.atomic_delete_object_request(&result.id).unwrap();
             let res = self.client.send(req).await?;
@@ -558,20 +543,7 @@ impl kv::Adapter for Adapter {
             }
         }
 
-        // Maybe a known issue with commits
-        // TODO: Maybe change this to retry
-        // TODO Either add notes or make this code clean
-        for _i in 0..1500 {
-            let req = self.atomic_get_object_request(path).unwrap();
-            let resp = self.client.send(req).await?;
-            let bytes = resp.into_body().bytes().await?;
-            let query_result: QueryResultStruct =
-                serde_json::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
-            if query_result.results.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
+        let _ = self.wait_for_resource(path, false).await;
 
         Ok(())
     }
