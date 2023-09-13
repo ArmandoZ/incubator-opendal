@@ -224,16 +224,13 @@ impl Adapter {
     fn sanitize_path(&self, path: &str) -> String {
         // Sanitize the same way as
         // https://github.com/atomicdata-dev/atomic-server/blob/49d65da6b80323117fb488106a325fca95ca48b3/server/src/handlers/upload.rs#L56C13-L56C50
-        // TODO: Maybe change with a proper file directory
         let binding = sanitize_filename::sanitize(path);
-
         binding.replace(' ', "-")
     }
 }
 
 impl Adapter {
     pub fn atomic_get_object_request(&self, path: &str) -> Result<Request<AsyncBody>> {
-        // TODO error handling
         let path = self.sanitize_path(path).to_owned();
         let path = path.as_str();
 
@@ -272,7 +269,6 @@ impl Adapter {
         path: &str,
         value: &[u8],
     ) -> Result<Request<AsyncBody>> {
-        // Real set
         let path = self.sanitize_path(path).to_owned();
         let path = path.as_str();
 
@@ -282,14 +278,13 @@ impl Adapter {
             self.endpoint,
             percent_encode_path(&self.parent_resource_id)
         );
-        let mut req = Request::post(&url);
 
-        let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
         // [TODO REMOVE DEBUG]
         if DO_DEBUG {
             println!("set Url: {}", url);
         }
 
+        let mut req = Request::post(&url);
         // Get/Set authentication headers
         let auth_headers = get_authentication_headers(&url, &self.agent).unwrap();
 
@@ -300,13 +295,13 @@ impl Adapter {
             }
             req = req.header(k, v);
         }
+        let boundary = format!("opendal-{}", uuid::Uuid::new_v4());
         req = req.header(
             CONTENT_TYPE,
             format!("multipart/form-data; boundary={}", boundary),
         );
 
-        let owned_value = value.to_vec();
-
+        // let value_owned = value.to_vec();
         let datapart = FormDataPart::new("assets")
             .header(
                 CONTENT_DISPOSITION,
@@ -315,7 +310,7 @@ impl Adapter {
                     .unwrap(),
             )
             .header(CONTENT_TYPE, "text/plain".parse().unwrap())
-            .content(owned_value);
+            .content(value.to_vec());
 
         // Build request body
         let multipart = Multipart::new().part(datapart).with_boundary(&boundary);
@@ -347,7 +342,6 @@ impl Adapter {
     }
 
     pub fn atomic_delete_object_request(&self, subject: &str) -> Result<Request<AsyncBody>> {
-        // TODO error handling
         let url = format!("{}/commit", self.endpoint);
 
         let timestamp = std::time::SystemTime::now()
@@ -355,7 +349,6 @@ impl Adapter {
             .expect("You're a time traveler")
             .as_millis() as i64;
 
-        // TODO So many duplicates here
         let commit_to_sign = CommitStruct {
             created_at: timestamp,
             destroy: true,
@@ -410,8 +403,10 @@ impl Adapter {
 
 impl Adapter {
     async fn wait_for_resource(&self, path: &str, expect_exist: bool) -> Result<()> {
-        // TODO Either add notes or make this code clean
-        for _i in 0..1500 {
+        // This is used to wait until insert/delete is actually effective
+        // This wait function is needed because atomicdata commits are not processed in real-time
+        // See https://docs.atomicdata.dev/commits/intro.html#motivation
+        for _i in 0..1000 {
             let req = self.atomic_get_object_request(path).unwrap();
             let resp = self.client.send(req).await?;
             let bytes = resp.into_body().bytes().await?;
@@ -494,7 +489,6 @@ impl kv::Adapter for Adapter {
     }
 
     async fn set(&self, path: &str, value: &[u8]) -> Result<()> {
-        // TODO Handle overwrite - delete existing
         let req = self.atomic_get_object_request(path).unwrap();
         let res = self.client.send(req).await?;
         let bytes = res.into_body().bytes().await?;
@@ -531,7 +525,6 @@ impl kv::Adapter for Adapter {
     }
 
     async fn delete(&self, path: &str) -> Result<()> {
-        // TODO should we refactor to core/backend - study them
         let req = self.atomic_get_object_request(path).unwrap();
         let res = self.client.send(req).await?;
         let bytes = res.into_body().bytes().await?;
